@@ -244,17 +244,44 @@ fn prefix_tree_to_visit_sets(tree: &RepoPathTree<PrefixNodeKind>) -> Visit {
 #[derive(Clone, Debug)]
 pub struct FileGlobsMatcher {
     tree: RepoPathTree<Vec<glob::Pattern>>,
+    case_sensitive: bool,
 }
 
 impl FileGlobsMatcher {
+    /// Creates a new matcher with the default case-sensitive behavior.
     pub fn new<D: AsRef<RepoPath>>(
         dir_patterns: impl IntoIterator<Item = (D, glob::Pattern)>,
+    ) -> Self {
+        Self::with_case_sensitivity(dir_patterns, true)
+    }
+
+    /// Creates a new matcher with the specified case sensitivity.
+    pub fn with_case_sensitivity<D: AsRef<RepoPath>>(
+        dir_patterns: impl IntoIterator<Item = (D, glob::Pattern)>,
+        case_sensitive: bool,
     ) -> Self {
         let mut tree: RepoPathTree<Vec<glob::Pattern>> = Default::default();
         for (dir, pattern) in dir_patterns {
             tree.add(dir.as_ref()).value.push(pattern);
         }
-        FileGlobsMatcher { tree }
+        FileGlobsMatcher { 
+            tree,
+            case_sensitive,
+        }
+    }
+
+    /// Creates a new matcher with case-sensitive matching.
+    pub fn new_case_sensitive<D: AsRef<RepoPath>>(
+        dir_patterns: impl IntoIterator<Item = (D, glob::Pattern)>,
+    ) -> Self {
+        Self::with_case_sensitivity(dir_patterns, true)
+    }
+
+    /// Creates a new matcher with case-insensitive matching.
+    pub fn new_case_insensitive<D: AsRef<RepoPath>>(
+        dir_patterns: impl IntoIterator<Item = (D, glob::Pattern)>,
+    ) -> Self {
+        Self::with_case_sensitivity(dir_patterns, false)
     }
 }
 
@@ -263,8 +290,8 @@ impl Matcher for FileGlobsMatcher {
         // TODO: glob::Pattern relies on path::is_separator() internally, but
         // RepoPath separator should be '/'. One way to address this problem is
         // to switch to globset::Glob, and use the underlying regex pattern.
-        const OPTIONS: glob::MatchOptions = glob::MatchOptions {
-            case_sensitive: true,
+        let options = glob::MatchOptions {
+            case_sensitive: self.case_sensitive,
             require_literal_separator: true,
             require_literal_leading_dot: false,
         };
@@ -274,7 +301,7 @@ impl Matcher for FileGlobsMatcher {
             .take_while(|(_, tail_path)| !tail_path.is_root()) // only dirs
             .any(|(sub, tail_path)| {
                 let name = tail_path.as_internal_file_string();
-                sub.value.iter().any(|pat| pat.matches_with(name, OPTIONS))
+                sub.value.iter().any(|pat| pat.matches_with(name, options))
             })
     }
 

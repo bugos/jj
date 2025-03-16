@@ -79,6 +79,8 @@ pub enum FilePattern {
         dir: RepoPathBuf,
         /// Glob pattern relative to `dir`.
         pattern: glob::Pattern,
+        /// Whether the pattern is case-sensitive (default: true).
+        case_sensitive: bool,
     },
     // TODO: add more patterns:
     // - FilesInPath: files in directory, non-recursively?
@@ -110,9 +112,11 @@ impl FilePattern {
             "cwd" => Self::cwd_prefix_path(path_converter, input),
             "cwd-file" | "file" => Self::cwd_file_path(path_converter, input),
             "cwd-glob" | "glob" => Self::cwd_file_glob(path_converter, input),
+            "cwd-glob-i" | "glob-i" => Self::cwd_file_glob_i(path_converter, input),
             "root" => Self::root_prefix_path(input),
             "root-file" => Self::root_file_path(input),
             "root-glob" => Self::root_file_glob(input),
+            "root-glob-i" => Self::root_file_glob_i(input),
             _ => Err(FilePatternParseError::InvalidKind(kind.to_owned())),
         }
     }
@@ -142,7 +146,17 @@ impl FilePattern {
     ) -> Result<Self, FilePatternParseError> {
         let (dir, pattern) = split_glob_path(input.as_ref());
         let dir = path_converter.parse_file_path(dir)?;
-        Self::file_glob_at(dir, pattern)
+        Self::file_glob_at(dir, pattern, true)
+    }
+
+    /// Pattern that matches cwd-relative file path glob case-insensitively.
+    pub fn cwd_file_glob_i(
+        path_converter: &RepoPathUiConverter,
+        input: impl AsRef<str>,
+    ) -> Result<Self, FilePatternParseError> {
+        let (dir, pattern) = split_glob_path(input.as_ref());
+        let dir = path_converter.parse_file_path(dir)?;
+        Self::file_glob_at(dir, pattern, false)
     }
 
     /// Pattern that matches workspace-relative file (or exact) path.
@@ -162,17 +176,28 @@ impl FilePattern {
     pub fn root_file_glob(input: impl AsRef<str>) -> Result<Self, FilePatternParseError> {
         let (dir, pattern) = split_glob_path(input.as_ref());
         let dir = RepoPathBuf::from_relative_path(dir)?;
-        Self::file_glob_at(dir, pattern)
+        Self::file_glob_at(dir, pattern, true)
     }
 
-    fn file_glob_at(dir: RepoPathBuf, input: &str) -> Result<Self, FilePatternParseError> {
+    /// Pattern that matches workspace-relative file path glob case-insensitively.
+    pub fn root_file_glob_i(input: impl AsRef<str>) -> Result<Self, FilePatternParseError> {
+        let (dir, pattern) = split_glob_path(input.as_ref());
+        let dir = RepoPathBuf::from_relative_path(dir)?;
+        Self::file_glob_at(dir, pattern, false)
+    }
+
+    fn file_glob_at(dir: RepoPathBuf, input: &str, case_sensitive: bool) -> Result<Self, FilePatternParseError> {
         if input.is_empty() {
             return Ok(FilePattern::FilePath(dir));
         }
         // Normalize separator to '/', reject ".." which will never match
         let normalized = RepoPathBuf::from_relative_path(input)?;
         let pattern = glob::Pattern::new(normalized.as_internal_file_string())?;
-        Ok(FilePattern::FileGlob { dir, pattern })
+        Ok(FilePattern::FileGlob { 
+            dir, 
+            pattern,
+            case_sensitive,
+        })
     }
 
     /// Returns path if this pattern represents a literal path in a workspace.
@@ -316,7 +341,8 @@ impl FilesetExpression {
 fn build_union_matcher(expressions: &[FilesetExpression]) -> Box<dyn Matcher> {
     let mut file_paths = Vec::new();
     let mut prefix_paths = Vec::new();
-    let mut file_globs = Vec::new();
+    let mut file_globs_sensitive = Vec::new();
+    let mut file_globs_insensitive = Vec::new();
     let mut matchers: Vec<Option<Box<dyn Matcher>>> = Vec::new();
     for expr in expressions {
         let matcher: Box<dyn Matcher> = match expr {
@@ -327,9 +353,13 @@ fn build_union_matcher(expressions: &[FilesetExpression]) -> Box<dyn Matcher> {
                 match pattern {
                     FilePattern::FilePath(path) => file_paths.push(path),
                     FilePattern::PrefixPath(path) => prefix_paths.push(path),
-                    FilePattern::FileGlob { dir, pattern } => {
-                        file_globs.push((dir, pattern.clone()));
-                    }
+                    FilePattern::FileGlob { dir, pattern, case_sensitive } => {
+                        if *case_sensitive {
+                            file_globs_sensitive.push((dir, pattern.clone()));
+                        } else {
+                            file_globs_insensitive.push((dir, pattern.clone()));
+                        }
+                    },
                 }
                 continue;
             }
@@ -355,8 +385,11 @@ fn build_union_matcher(expressions: &[FilesetExpression]) -> Box<dyn Matcher> {
     if !prefix_paths.is_empty() {
         matchers.push(Some(Box::new(PrefixMatcher::new(prefix_paths))));
     }
-    if !file_globs.is_empty() {
-        matchers.push(Some(Box::new(FileGlobsMatcher::new(file_globs))));
+    if !file_globs_sensitive.is_empty() {
+        matchers.push(Some(Box::new(FileGlobsMatcher::with_case_sensitivity(file_globs_sensitive, true))));
+    }
+    if !file_globs_insensitive.is_empty() {
+        matchers.push(Some(Box::new(FileGlobsMatcher::with_case_sensitivity(file_globs_insensitive, false))));
     }
     union_all_matchers(&mut matchers)
 }
@@ -740,6 +773,61 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_case_insensitive_glob_pattern() {
+        let path_converter = RepoPathUiConverter::Fs {
+            cwd: PathBuf::from("/ws/cur"),
+            base: PathBuf::from("/ws"),
+        };
+        let parse = |text| parse_maybe_bare(&mut FilesetDiagnostics::new(), text, &path_converter);
+
+        // Case-insensitive glob patterns
+        let result = parse(r#"glob-i:"foo""#).unwrap();
+        if let FilesetExpression::Pattern(FilePattern::FilePath(path)) = &result {
+            assert_eq!(path.as_internal_file_string(), "cur/foo");
+        } else {
+            panic!("Expected FilePath pattern, got: {:?}", result);
+        }
+
+        let result = parse(r#"glob-i:"*""#).unwrap();
+        if let FilesetExpression::Pattern(FilePattern::FileGlob { dir, pattern, case_sensitive }) = &result {
+            assert_eq!(dir.as_internal_file_string(), "cur");
+            assert_eq!(pattern.as_str(), "*");
+            assert!(!case_sensitive);
+        } else {
+            panic!("Expected FileGlob pattern, got: {:?}", result);
+        }
+
+        let result = parse(r#"root-glob-i:"foo/bar/b[az]""#).unwrap();
+        if let FilesetExpression::Pattern(FilePattern::FileGlob { dir, pattern, case_sensitive }) = &result {
+            assert_eq!(dir.as_internal_file_string(), "foo/bar");
+            assert_eq!(pattern.as_str(), "b[az]");
+            assert!(!case_sensitive);
+        } else {
+            panic!("Expected FileGlob pattern, got: {:?}", result);
+        }
+    }
+
+    #[test]
+    fn test_fileglobsmatcher_case_sensitivity() {
+        let to_pattern = |s| glob::Pattern::new(s).unwrap();
+        let repo_path = |s: &str| RepoPathBuf::from_internal_string(s);
+
+        // Case-sensitive matcher (default)
+        let m = FileGlobsMatcher::with_case_sensitivity([(RepoPath::root(), to_pattern("Foo*"))], true);
+        assert!(m.matches(&repo_path("Foo")));
+        assert!(m.matches(&repo_path("FooBar")));
+        assert!(!m.matches(&repo_path("foo")));
+        assert!(!m.matches(&repo_path("foobar")));
+
+        // Case-insensitive matcher
+        let m = FileGlobsMatcher::with_case_sensitivity([(RepoPath::root(), to_pattern("Foo*"))], false);
+        assert!(m.matches(&repo_path("Foo")));
+        assert!(m.matches(&repo_path("FooBar")));
+        assert!(m.matches(&repo_path("foo")));
+        assert!(m.matches(&repo_path("foobar")));
+    }
+
+    #[test]
     fn test_parse_function() {
         let settings = insta_settings();
         let _guard = settings.bind_to_scope();
@@ -869,14 +957,15 @@ mod tests {
     fn test_build_matcher_glob_pattern() {
         let settings = insta_settings();
         let _guard = settings.bind_to_scope();
-        let glob_expr = |dir: &str, pattern: &str| {
+        let glob_expr = |dir: &str, pattern: &str, case_sensitive: bool| {
             FilesetExpression::pattern(FilePattern::FileGlob {
                 dir: repo_path_buf(dir),
                 pattern: glob::Pattern::new(pattern).unwrap(),
+                case_sensitive,
             })
         };
 
-        insta::assert_debug_snapshot!(glob_expr("", "*").to_matcher(), @r#"
+        insta::assert_debug_snapshot!(glob_expr("", "*", true).to_matcher(), @r#"
         FileGlobsMatcher {
             tree: [
                 Pattern {
@@ -885,11 +974,12 @@ mod tests {
                     is_recursive: false,
                 },
             ] {},
+            case_sensitive: true,
         }
         "#);
 
         let expr =
-            FilesetExpression::union_all(vec![glob_expr("foo", "*"), glob_expr("foo/bar", "*")]);
+            FilesetExpression::union_all(vec![glob_expr("foo", "*", true), glob_expr("foo/bar", "*", true)]);
         insta::assert_debug_snapshot!(expr.to_matcher(), @r#"
         FileGlobsMatcher {
             tree: [] {
@@ -909,6 +999,21 @@ mod tests {
                     ] {},
                 },
             },
+            case_sensitive: true,
+        }
+        "#);
+        
+        // Test case-insensitive glob pattern
+        insta::assert_debug_snapshot!(glob_expr("", "*", false).to_matcher(), @r#"
+        FileGlobsMatcher {
+            tree: [
+                Pattern {
+                    original: "*",
+                    tokens: _,
+                    is_recursive: false,
+                },
+            ] {},
+            case_sensitive: false,
         }
         "#);
     }

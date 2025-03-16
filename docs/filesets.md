@@ -35,11 +35,15 @@ the path [has no special characters](#quoting-file-names).
 * `glob:"pattern"` or `cwd-glob:"pattern"`: Matches file paths with cwd-relative
   Unix-style shell [wildcard `pattern`][glob]. For example, `glob:"*.c"` will
   match all `.c` files in the current working directory non-recursively.
+* `glob-i:"pattern"` or `cwd-glob-i:"pattern"`: Same as `glob:`, but matches case-insensitively.
 * `root:"path"`: Matches workspace-relative path prefix (file or files under
   directory recursively.)
 * `root-file:"path"`: Matches workspace-relative file (or exact) path.
 * `root-glob:"pattern"`: Matches file paths with workspace-relative Unix-style
   shell [wildcard `pattern`][glob].
+* `root-glob-i:"pattern"`: Same as `root-glob:`, but matches case-insensitively.
+
+You can append `-i` after the kind to match case-insensitively (e.g. `glob-i:"*.jpg"`).
 
 [glob]: https://docs.rs/glob/latest/glob/struct.Pattern.html
 
