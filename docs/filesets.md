@@ -47,6 +47,27 @@ You can append `-i` after the kind to match case-insensitively (e.g. `glob-i:"*.
 
 [glob]: https://docs.rs/glob/latest/glob/struct.Pattern.html
 
+## Pattern Kinds
+
+The following pattern kinds are supported:
+
+* `cwd:` - matches files under the current working directory (default)
+* `cwd-file:` or `file:` - matches exact file path relative to the current working directory
+* `cwd-glob:` or `glob:` - matches files with glob pattern relative to the current working directory
+* `root:` - matches files under the workspace root
+* `root-file:` - matches exact file path relative to the workspace root
+* `root-glob:` - matches files with glob pattern relative to the workspace root
+
+You can append `-i` to any pattern kind to make it case-insensitive. For example:
+* `cwd-i:src/test` matches `src/Test` or `Src/test`
+* `file-i:README.md` matches `readme.md` or `README.MD`
+* `glob-i:"*.jpg"` matches `*.jpg`, `*.JPG`, etc.
+* `root-i:docs` matches `Docs` or `DOCS`
+* `root-file-i:LICENSE` matches `license` or `License`
+* `root-glob-i:"*.rs"` matches `*.rs`, `*.RS`, etc.
+
+Note that case-insensitive matching is useful on case-sensitive filesystems or when you want to match files regardless of case.
+
 ## Operators
 
 The following operators are supported. `x` and `y` below can be any fileset

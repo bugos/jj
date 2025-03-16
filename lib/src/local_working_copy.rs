@@ -756,7 +756,7 @@ impl TreeState {
     }
 
     fn sparse_matcher(&self) -> Box<dyn Matcher> {
-        Box::new(PrefixMatcher::new(&self.sparse_patterns))
+        Box::new(PrefixMatcher::new_with_case_sensitivity(&self.sparse_patterns, true))
     }
 
     pub fn init(
@@ -1101,7 +1101,7 @@ impl TreeState {
                         .collect_vec()
                 });
 
-                Some(Box::new(FilesMatcher::new(repo_paths)))
+                Some(Box::new(FilesMatcher::new_with_case_sensitivity(repo_paths, true)))
             }
         };
         Ok(FsmonitorMatcher {
@@ -1711,8 +1711,8 @@ impl TreeState {
             },
             other => CheckoutError::InternalBackendError(other),
         })?;
-        let old_matcher = PrefixMatcher::new(&self.sparse_patterns);
-        let new_matcher = PrefixMatcher::new(&sparse_patterns);
+        let old_matcher = PrefixMatcher::new_with_case_sensitivity(&self.sparse_patterns, true);
+        let new_matcher = PrefixMatcher::new_with_case_sensitivity(&sparse_patterns, true);
         let added_matcher = DifferenceMatcher::new(&new_matcher, &old_matcher);
         let removed_matcher = DifferenceMatcher::new(&old_matcher, &new_matcher);
         let empty_tree = MergedTree::resolved(Tree::empty(self.store.clone(), RepoPathBuf::root()));

@@ -126,23 +126,41 @@ impl Matcher for EverythingMatcher {
 #[derive(PartialEq, Eq, Debug)]
 pub struct FilesMatcher {
     tree: RepoPathTree<FilesNodeKind>,
+    case_sensitive: bool,
 }
 
 impl FilesMatcher {
+    /// Creates a new matcher with case-sensitive matching.
     pub fn new(files: impl IntoIterator<Item = impl AsRef<RepoPath>>) -> Self {
+        Self::new_with_case_sensitivity(files, true)
+    }
+
+    /// Creates a new matcher with the specified case sensitivity.
+    pub fn new_with_case_sensitivity(
+        files: impl IntoIterator<Item = impl AsRef<RepoPath>>,
+        case_sensitive: bool,
+    ) -> Self {
         let mut tree = RepoPathTree::default();
-        for f in files {
-            tree.add(f.as_ref()).value = FilesNodeKind::File;
+        for path in files {
+            tree.add(path.as_ref()).value = FilesNodeKind::File;
         }
-        FilesMatcher { tree }
+        Self { tree, case_sensitive }
     }
 }
 
 impl Matcher for FilesMatcher {
-    fn matches(&self, file: &RepoPath) -> bool {
-        self.tree
-            .get(file)
-            .is_some_and(|sub| sub.value == FilesNodeKind::File)
+    fn matches(&self, path: &RepoPath) -> bool {
+        if self.case_sensitive {
+            self.tree
+                .get(path)
+                .is_some_and(|sub| sub.value == FilesNodeKind::File)
+        } else {
+            // For case-insensitive matching, convert both paths to lowercase
+            let path_lower = path.as_internal_file_string().to_lowercase();
+            self.tree.entries.iter().any(|(tree_path, node)| {
+                node.value == FilesNodeKind::File && tree_path.as_internal_str().to_lowercase() == path_lower
+            })
+        }
     }
 
     fn visit(&self, dir: &RepoPath) -> Visit {
@@ -179,24 +197,41 @@ fn files_tree_to_visit_sets(tree: &RepoPathTree<FilesNodeKind>) -> Visit {
 #[derive(Debug)]
 pub struct PrefixMatcher {
     tree: RepoPathTree<PrefixNodeKind>,
+    case_sensitive: bool,
 }
 
 impl PrefixMatcher {
-    #[instrument(skip(prefixes))]
+    /// Creates a new matcher with case-sensitive matching.
     pub fn new(prefixes: impl IntoIterator<Item = impl AsRef<RepoPath>>) -> Self {
+        Self::new_with_case_sensitivity(prefixes, true)
+    }
+
+    /// Creates a new matcher with the specified case sensitivity.
+    pub fn new_with_case_sensitivity(
+        prefixes: impl IntoIterator<Item = impl AsRef<RepoPath>>,
+        case_sensitive: bool,
+    ) -> Self {
         let mut tree = RepoPathTree::default();
-        for prefix in prefixes {
-            tree.add(prefix.as_ref()).value = PrefixNodeKind::Prefix;
+        for path in prefixes {
+            tree.add(path.as_ref()).value = PrefixNodeKind::Prefix;
         }
-        PrefixMatcher { tree }
+        Self { tree, case_sensitive }
     }
 }
 
 impl Matcher for PrefixMatcher {
-    fn matches(&self, file: &RepoPath) -> bool {
-        self.tree
-            .walk_to(file)
-            .any(|(sub, _)| sub.value == PrefixNodeKind::Prefix)
+    fn matches(&self, path: &RepoPath) -> bool {
+        if self.case_sensitive {
+            self.tree
+                .walk_to(path)
+                .any(|(sub, _)| sub.value == PrefixNodeKind::Prefix)
+        } else {
+            // For case-insensitive matching, convert both paths to lowercase
+            let path_lower = path.as_internal_file_string().to_lowercase();
+            self.tree.entries.iter().any(|(tree_path, node)| {
+                node.value == PrefixNodeKind::Prefix && path_lower.starts_with(&tree_path.as_internal_str().to_lowercase())
+            })
+        }
     }
 
     fn visit(&self, dir: &RepoPath) -> Visit {
@@ -248,7 +283,7 @@ pub struct FileGlobsMatcher {
 }
 
 impl FileGlobsMatcher {
-    /// Creates a new matcher with the default case-sensitive behavior.
+    /// Creates a new matcher with case-sensitive matching.
     pub fn new<D: AsRef<RepoPath>>(
         dir_patterns: impl IntoIterator<Item = (D, glob::Pattern)>,
     ) -> Self {
@@ -260,14 +295,11 @@ impl FileGlobsMatcher {
         dir_patterns: impl IntoIterator<Item = (D, glob::Pattern)>,
         case_sensitive: bool,
     ) -> Self {
-        let mut tree: RepoPathTree<Vec<glob::Pattern>> = Default::default();
+        let mut tree: RepoPathTree<Vec<glob::Pattern>> = RepoPathTree::default();
         for (dir, pattern) in dir_patterns {
             tree.add(dir.as_ref()).value.push(pattern);
         }
-        FileGlobsMatcher { 
-            tree,
-            case_sensitive,
-        }
+        Self { tree, case_sensitive }
     }
 
     /// Creates a new matcher with case-sensitive matching.

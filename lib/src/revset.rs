@@ -3210,23 +3210,60 @@ mod tests {
         assert!(parse_with_workspace("file()", &WorkspaceId::default()).is_err());
         insta::assert_debug_snapshot!(
             parse_with_workspace("files(foo)", &WorkspaceId::default()).unwrap(),
-            @r#"Filter(File(Pattern(PrefixPath("foo"))))"#);
+            @r#"
+        Filter(
+            File(
+                Pattern(
+                    PrefixPath {
+                        path: "foo",
+                        case_sensitive: true,
+                    },
+                ),
+            ),
+        )
+        "#);
         insta::assert_debug_snapshot!(
             parse_with_workspace("files(all())", &WorkspaceId::default()).unwrap(),
             @"Filter(File(All))");
         insta::assert_debug_snapshot!(
             parse_with_workspace(r#"files(file:"foo")"#, &WorkspaceId::default()).unwrap(),
-            @r#"Filter(File(Pattern(FilePath("foo"))))"#);
+            @r#"
+        Filter(
+            File(
+                Pattern(
+                    FilePath {
+                        path: "foo",
+                        case_sensitive: true,
+                    },
+                ),
+            ),
+        )
+        "#);
         insta::assert_debug_snapshot!(
             parse_with_workspace("files(foo|bar&baz)", &WorkspaceId::default()).unwrap(), @r#"
         Filter(
             File(
                 UnionAll(
                     [
-                        Pattern(PrefixPath("foo")),
+                        Pattern(
+                            PrefixPath {
+                                path: "foo",
+                                case_sensitive: true,
+                            },
+                        ),
                         Intersection(
-                            Pattern(PrefixPath("bar")),
-                            Pattern(PrefixPath("baz")),
+                            Pattern(
+                                PrefixPath {
+                                    path: "bar",
+                                    case_sensitive: true,
+                                },
+                            ),
+                            Pattern(
+                                PrefixPath {
+                                    path: "baz",
+                                    case_sensitive: true,
+                                },
+                            ),
                         ),
                     ],
                 ),
@@ -3372,7 +3409,18 @@ mod tests {
         insta::assert_debug_snapshot!(
             parse_with_aliases_and_workspace("files(A)", [("A", "a")], &WorkspaceId::default())
                 .unwrap(),
-            @r#"Filter(File(Pattern(PrefixPath("a"))))"#);
+            @r#"
+        Filter(
+            File(
+                Pattern(
+                    PrefixPath {
+                        path: "a",
+                        case_sensitive: true,
+                    },
+                ),
+            ),
+        )
+        "#);
 
         // Alias can be substituted to string pattern.
         insta::assert_debug_snapshot!(
@@ -3856,7 +3904,16 @@ mod tests {
                 CommitRef(Symbol("baz")),
                 Filter(CommitterName(Substring("foo"))),
             ),
-            Filter(File(Pattern(PrefixPath("bar")))),
+            Filter(
+                File(
+                    Pattern(
+                        PrefixPath {
+                            path: "bar",
+                            case_sensitive: true,
+                        },
+                    ),
+                ),
+            ),
         )
         "#);
         insta::assert_debug_snapshot!(
@@ -3867,7 +3924,16 @@ mod tests {
         Intersection(
             Intersection(
                 Filter(CommitterName(Substring("foo"))),
-                Filter(File(Pattern(PrefixPath("bar")))),
+                Filter(
+                    File(
+                        Pattern(
+                            PrefixPath {
+                                path: "bar",
+                                case_sensitive: true,
+                            },
+                        ),
+                    ),
+                ),
             ),
             Filter(AuthorName(Substring("baz"))),
         )
@@ -3882,7 +3948,16 @@ mod tests {
                 CommitRef(Symbol("foo")),
                 CommitRef(Symbol("baz")),
             ),
-            Filter(File(Pattern(PrefixPath("bar")))),
+            Filter(
+                File(
+                    Pattern(
+                        PrefixPath {
+                            path: "bar",
+                            case_sensitive: true,
+                        },
+                    ),
+                ),
+            ),
         )
         "#);
 

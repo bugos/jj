@@ -70,9 +70,19 @@ pub enum FilePatternParseError {
 #[derive(Clone, Debug)]
 pub enum FilePattern {
     /// Matches file (or exact) path.
-    FilePath(RepoPathBuf),
+    FilePath {
+        /// The exact path to match
+        path: RepoPathBuf,
+        /// Whether the pattern is case-sensitive (default: true).
+        case_sensitive: bool,
+    },
     /// Matches path prefix.
-    PrefixPath(RepoPathBuf),
+    PrefixPath {
+        /// The prefix path to match
+        path: RepoPathBuf,
+        /// Whether the pattern is case-sensitive (default: true).
+        case_sensitive: bool,
+    },
     /// Matches file (or exact) path with glob pattern.
     FileGlob {
         /// Prefix directory path where the `pattern` will be evaluated.
@@ -94,6 +104,13 @@ impl FilePattern {
         input: &str,
         kind: &str,
     ) -> Result<Self, FilePatternParseError> {
+        // Split kind into base kind and case sensitivity
+        let (base_kind, case_sensitive) = if let Some(base) = kind.strip_suffix("-i") {
+            (base, false)
+        } else {
+            (kind, true)
+        };
+
         // Naming convention:
         // * path normalization
         //   * cwd: cwd-relative path (default)
@@ -108,15 +125,13 @@ impl FilePattern {
         //   * path: literal path (default) (default anchor: prefix)
         //   * glob: glob pattern (default anchor: file)
         //   * regex?
-        match kind {
-            "cwd" => Self::cwd_prefix_path(path_converter, input),
-            "cwd-file" | "file" => Self::cwd_file_path(path_converter, input),
-            "cwd-glob" | "glob" => Self::cwd_file_glob(path_converter, input),
-            "cwd-glob-i" | "glob-i" => Self::cwd_file_glob_i(path_converter, input),
-            "root" => Self::root_prefix_path(input),
-            "root-file" => Self::root_file_path(input),
-            "root-glob" => Self::root_file_glob(input),
-            "root-glob-i" => Self::root_file_glob_i(input),
+        match base_kind {
+            "cwd" => Self::cwd_prefix_path(path_converter, input, case_sensitive),
+            "cwd-file" | "file" => Self::cwd_file_path(path_converter, input, case_sensitive),
+            "cwd-glob" | "glob" => Self::cwd_file_glob(path_converter, input, case_sensitive),
+            "root" => Self::root_prefix_path(input, case_sensitive),
+            "root-file" => Self::root_file_path(input, case_sensitive),
+            "root-glob" => Self::root_file_glob(input, case_sensitive),
             _ => Err(FilePatternParseError::InvalidKind(kind.to_owned())),
         }
     }
@@ -125,70 +140,59 @@ impl FilePattern {
     pub fn cwd_file_path(
         path_converter: &RepoPathUiConverter,
         input: impl AsRef<str>,
+        case_sensitive: bool,
     ) -> Result<Self, FilePatternParseError> {
         let path = path_converter.parse_file_path(input.as_ref())?;
-        Ok(FilePattern::FilePath(path))
+        Ok(FilePattern::FilePath { path, case_sensitive })
     }
 
     /// Pattern that matches cwd-relative path prefix.
     pub fn cwd_prefix_path(
         path_converter: &RepoPathUiConverter,
         input: impl AsRef<str>,
+        case_sensitive: bool,
     ) -> Result<Self, FilePatternParseError> {
         let path = path_converter.parse_file_path(input.as_ref())?;
-        Ok(FilePattern::PrefixPath(path))
+        Ok(FilePattern::PrefixPath { path, case_sensitive })
     }
 
     /// Pattern that matches cwd-relative file path glob.
     pub fn cwd_file_glob(
         path_converter: &RepoPathUiConverter,
         input: impl AsRef<str>,
+        case_sensitive: bool,
     ) -> Result<Self, FilePatternParseError> {
         let (dir, pattern) = split_glob_path(input.as_ref());
         let dir = path_converter.parse_file_path(dir)?;
-        Self::file_glob_at(dir, pattern, true)
-    }
-
-    /// Pattern that matches cwd-relative file path glob case-insensitively.
-    pub fn cwd_file_glob_i(
-        path_converter: &RepoPathUiConverter,
-        input: impl AsRef<str>,
-    ) -> Result<Self, FilePatternParseError> {
-        let (dir, pattern) = split_glob_path(input.as_ref());
-        let dir = path_converter.parse_file_path(dir)?;
-        Self::file_glob_at(dir, pattern, false)
+        Self::file_glob_at(dir, pattern, case_sensitive)
     }
 
     /// Pattern that matches workspace-relative file (or exact) path.
-    pub fn root_file_path(input: impl AsRef<str>) -> Result<Self, FilePatternParseError> {
+    pub fn root_file_path(input: impl AsRef<str>, case_sensitive: bool) -> Result<Self, FilePatternParseError> {
         // TODO: Let caller pass in converter for root-relative paths too
         let path = RepoPathBuf::from_relative_path(input.as_ref())?;
-        Ok(FilePattern::FilePath(path))
+        Ok(FilePattern::FilePath { path, case_sensitive })
     }
 
     /// Pattern that matches workspace-relative path prefix.
-    pub fn root_prefix_path(input: impl AsRef<str>) -> Result<Self, FilePatternParseError> {
+    pub fn root_prefix_path(input: impl AsRef<str>, case_sensitive: bool) -> Result<Self, FilePatternParseError> {
         let path = RepoPathBuf::from_relative_path(input.as_ref())?;
-        Ok(FilePattern::PrefixPath(path))
+        Ok(FilePattern::PrefixPath { path, case_sensitive })
     }
 
     /// Pattern that matches workspace-relative file path glob.
-    pub fn root_file_glob(input: impl AsRef<str>) -> Result<Self, FilePatternParseError> {
+    pub fn root_file_glob(input: impl AsRef<str>, case_sensitive: bool) -> Result<Self, FilePatternParseError> {
         let (dir, pattern) = split_glob_path(input.as_ref());
         let dir = RepoPathBuf::from_relative_path(dir)?;
-        Self::file_glob_at(dir, pattern, true)
-    }
-
-    /// Pattern that matches workspace-relative file path glob case-insensitively.
-    pub fn root_file_glob_i(input: impl AsRef<str>) -> Result<Self, FilePatternParseError> {
-        let (dir, pattern) = split_glob_path(input.as_ref());
-        let dir = RepoPathBuf::from_relative_path(dir)?;
-        Self::file_glob_at(dir, pattern, false)
+        Self::file_glob_at(dir, pattern, case_sensitive)
     }
 
     fn file_glob_at(dir: RepoPathBuf, input: &str, case_sensitive: bool) -> Result<Self, FilePatternParseError> {
         if input.is_empty() {
-            return Ok(FilePattern::FilePath(dir));
+            return Ok(FilePattern::FilePath { 
+                path: dir, 
+                case_sensitive,
+            });
         }
         // Normalize separator to '/', reject ".." which will never match
         let normalized = RepoPathBuf::from_relative_path(input)?;
@@ -204,8 +208,8 @@ impl FilePattern {
     /// Returns `None` if this is a glob pattern for example.
     pub fn as_path(&self) -> Option<&RepoPath> {
         match self {
-            FilePattern::FilePath(path) => Some(path),
-            FilePattern::PrefixPath(path) => Some(path),
+            FilePattern::FilePath { path, .. } => Some(path),
+            FilePattern::PrefixPath { path, .. } => Some(path),
             FilePattern::FileGlob { .. } => None,
         }
     }
@@ -260,12 +264,12 @@ impl FilesetExpression {
 
     /// Expression that matches file (or exact) path.
     pub fn file_path(path: RepoPathBuf) -> Self {
-        FilesetExpression::Pattern(FilePattern::FilePath(path))
+        FilesetExpression::Pattern(FilePattern::FilePath { path, case_sensitive: true })
     }
 
     /// Expression that matches path prefix.
     pub fn prefix_path(path: RepoPathBuf) -> Self {
-        FilesetExpression::Pattern(FilePattern::PrefixPath(path))
+        FilesetExpression::Pattern(FilePattern::PrefixPath { path, case_sensitive: true })
     }
 
     /// Expression that matches any of the given `expressions`.
@@ -339,31 +343,43 @@ impl FilesetExpression {
 /// Since `Matcher` typically accepts a set of patterns to be OR-ed, this
 /// function takes a list of union `expressions` as input.
 fn build_union_matcher(expressions: &[FilesetExpression]) -> Box<dyn Matcher> {
-    let mut file_paths = Vec::new();
-    let mut prefix_paths = Vec::new();
+    let mut file_paths_sensitive = Vec::new();
+    let mut file_paths_insensitive = Vec::new();
+    let mut prefix_paths_sensitive = Vec::new();
+    let mut prefix_paths_insensitive = Vec::new();
     let mut file_globs_sensitive = Vec::new();
     let mut file_globs_insensitive = Vec::new();
     let mut matchers: Vec<Option<Box<dyn Matcher>>> = Vec::new();
     for expr in expressions {
         let matcher: Box<dyn Matcher> = match expr {
-            // None and All are supposed to be simplified by caller.
             FilesetExpression::None => Box::new(NothingMatcher),
             FilesetExpression::All => Box::new(EverythingMatcher),
             FilesetExpression::Pattern(pattern) => {
                 match pattern {
-                    FilePattern::FilePath(path) => file_paths.push(path),
-                    FilePattern::PrefixPath(path) => prefix_paths.push(path),
+                    FilePattern::FilePath { path, case_sensitive } => {
+                        if *case_sensitive {
+                            file_paths_sensitive.push(path);
+                        } else {
+                            file_paths_insensitive.push(path);
+                        }
+                    }
+                    FilePattern::PrefixPath { path, case_sensitive } => {
+                        if *case_sensitive {
+                            prefix_paths_sensitive.push(path);
+                        } else {
+                            prefix_paths_insensitive.push(path);
+                        }
+                    }
                     FilePattern::FileGlob { dir, pattern, case_sensitive } => {
                         if *case_sensitive {
                             file_globs_sensitive.push((dir, pattern.clone()));
                         } else {
                             file_globs_insensitive.push((dir, pattern.clone()));
                         }
-                    },
+                    }
                 }
                 continue;
             }
-            // UnionAll is supposed to be flattened by caller.
             FilesetExpression::UnionAll(exprs) => build_union_matcher(exprs),
             FilesetExpression::Intersection(expr1, expr2) => {
                 let m1 = build_union_matcher(expr1.as_union_all());
@@ -379,11 +395,17 @@ fn build_union_matcher(expressions: &[FilesetExpression]) -> Box<dyn Matcher> {
         matchers.push(Some(matcher));
     }
 
-    if !file_paths.is_empty() {
-        matchers.push(Some(Box::new(FilesMatcher::new(file_paths))));
+    if !file_paths_sensitive.is_empty() {
+        matchers.push(Some(Box::new(FilesMatcher::new_with_case_sensitivity(file_paths_sensitive, true))));
     }
-    if !prefix_paths.is_empty() {
-        matchers.push(Some(Box::new(PrefixMatcher::new(prefix_paths))));
+    if !file_paths_insensitive.is_empty() {
+        matchers.push(Some(Box::new(FilesMatcher::new_with_case_sensitivity(file_paths_insensitive, false))));
+    }
+    if !prefix_paths_sensitive.is_empty() {
+        matchers.push(Some(Box::new(PrefixMatcher::new_with_case_sensitivity(prefix_paths_sensitive, true))));
+    }
+    if !prefix_paths_insensitive.is_empty() {
+        matchers.push(Some(Box::new(PrefixMatcher::new_with_case_sensitivity(prefix_paths_insensitive, false))));
     }
     if !file_globs_sensitive.is_empty() {
         matchers.push(Some(Box::new(FileGlobsMatcher::with_case_sensitivity(file_globs_sensitive, true))));
@@ -461,12 +483,12 @@ fn resolve_expression(
     match &node.kind {
         ExpressionKind::Identifier(name) => {
             let pattern =
-                FilePattern::cwd_prefix_path(path_converter, name).map_err(wrap_pattern_error)?;
+                FilePattern::cwd_prefix_path(path_converter, name, true).map_err(wrap_pattern_error)?;
             Ok(FilesetExpression::pattern(pattern))
         }
         ExpressionKind::String(name) => {
             let pattern =
-                FilePattern::cwd_prefix_path(path_converter, name).map_err(wrap_pattern_error)?;
+                FilePattern::cwd_prefix_path(path_converter, name, true).map_err(wrap_pattern_error)?;
             Ok(FilesetExpression::pattern(pattern))
         }
         ExpressionKind::StringPattern { kind, value } => {
@@ -567,35 +589,98 @@ mod tests {
         // cwd-relative patterns
         insta::assert_debug_snapshot!(
             parse(".").unwrap(),
-            @r#"Pattern(PrefixPath("cur"))"#);
+            @r#"
+        Pattern(
+            PrefixPath {
+                path: "cur",
+                case_sensitive: true,
+            },
+        )
+        "#);
         insta::assert_debug_snapshot!(
             parse("..").unwrap(),
-            @r#"Pattern(PrefixPath(""))"#);
+            @r#"
+        Pattern(
+            PrefixPath {
+                path: "",
+                case_sensitive: true,
+            },
+        )
+        "#);
         assert!(parse("../..").is_err());
         insta::assert_debug_snapshot!(
             parse("foo").unwrap(),
-            @r#"Pattern(PrefixPath("cur/foo"))"#);
+            @r#"
+        Pattern(
+            PrefixPath {
+                path: "cur/foo",
+                case_sensitive: true,
+            },
+        )
+        "#);
         insta::assert_debug_snapshot!(
             parse("cwd:.").unwrap(),
-            @r#"Pattern(PrefixPath("cur"))"#);
+            @r#"
+        Pattern(
+            PrefixPath {
+                path: "cur",
+                case_sensitive: true,
+            },
+        )
+        "#);
         insta::assert_debug_snapshot!(
             parse("cwd-file:foo").unwrap(),
-            @r#"Pattern(FilePath("cur/foo"))"#);
+            @r#"
+        Pattern(
+            FilePath {
+                path: "cur/foo",
+                case_sensitive: true,
+            },
+        )
+        "#);
         insta::assert_debug_snapshot!(
             parse("file:../foo/bar").unwrap(),
-            @r#"Pattern(FilePath("foo/bar"))"#);
+            @r#"
+        Pattern(
+            FilePath {
+                path: "foo/bar",
+                case_sensitive: true,
+            },
+        )
+        "#);
 
         // workspace-relative patterns
         insta::assert_debug_snapshot!(
             parse("root:.").unwrap(),
-            @r#"Pattern(PrefixPath(""))"#);
+            @r#"
+        Pattern(
+            PrefixPath {
+                path: "",
+                case_sensitive: true,
+            },
+        )
+        "#);
         assert!(parse("root:..").is_err());
         insta::assert_debug_snapshot!(
             parse("root:foo/bar").unwrap(),
-            @r#"Pattern(PrefixPath("foo/bar"))"#);
+            @r#"
+        Pattern(
+            PrefixPath {
+                path: "foo/bar",
+                case_sensitive: true,
+            },
+        )
+        "#);
         insta::assert_debug_snapshot!(
             parse("root-file:bar").unwrap(),
-            @r#"Pattern(FilePath("bar"))"#);
+            @r#"
+        Pattern(
+            FilePath {
+                path: "bar",
+                case_sensitive: true,
+            },
+        )
+        "#);
     }
 
     #[test]
@@ -612,18 +697,46 @@ mod tests {
         // cwd-relative, without meta characters
         insta::assert_debug_snapshot!(
             parse(r#"cwd-glob:"foo""#).unwrap(),
-            @r#"Pattern(FilePath("cur*/foo"))"#);
+            @r#"
+        Pattern(
+            FilePath {
+                path: "cur*/foo",
+                case_sensitive: true,
+            },
+        )
+        "#);
         // Strictly speaking, glob:"" shouldn't match a file named <cwd>, but
         // file pattern doesn't distinguish "foo/" from "foo".
         insta::assert_debug_snapshot!(
             parse(r#"glob:"""#).unwrap(),
-            @r#"Pattern(FilePath("cur*"))"#);
+            @r#"
+        Pattern(
+            FilePath {
+                path: "cur*",
+                case_sensitive: true,
+            },
+        )
+        "#);
         insta::assert_debug_snapshot!(
             parse(r#"glob:".""#).unwrap(),
-            @r#"Pattern(FilePath("cur*"))"#);
+            @r#"
+        Pattern(
+            FilePath {
+                path: "cur*",
+                case_sensitive: true,
+            },
+        )
+        "#);
         insta::assert_debug_snapshot!(
             parse(r#"glob:"..""#).unwrap(),
-            @r#"Pattern(FilePath(""))"#);
+            @r#"
+        Pattern(
+            FilePath {
+                path: "",
+                case_sensitive: true,
+            },
+        )
+        "#);
 
         // cwd-relative, with meta characters
         insta::assert_debug_snapshot!(
@@ -636,6 +749,7 @@ mod tests {
                     tokens: _,
                     is_recursive: false,
                 },
+                case_sensitive: true,
             },
         )
         "#);
@@ -649,6 +763,7 @@ mod tests {
                     tokens: _,
                     is_recursive: false,
                 },
+                case_sensitive: true,
             },
         )
         "#);
@@ -662,6 +777,7 @@ mod tests {
                     tokens: _,
                     is_recursive: false,
                 },
+                case_sensitive: true,
             },
         )
         "#);
@@ -676,6 +792,7 @@ mod tests {
                     tokens: _,
                     is_recursive: true,
                 },
+                case_sensitive: true,
             },
         )
         "#);
@@ -689,6 +806,7 @@ mod tests {
                     tokens: _,
                     is_recursive: false,
                 },
+                case_sensitive: true,
             },
         )
         "#);
@@ -723,6 +841,7 @@ mod tests {
                         tokens: _,
                         is_recursive: false,
                     },
+                    case_sensitive: true,
                 },
             )
             "#);
@@ -731,13 +850,34 @@ mod tests {
         // workspace-relative, without meta characters
         insta::assert_debug_snapshot!(
             parse(r#"root-glob:"foo""#).unwrap(),
-            @r#"Pattern(FilePath("foo"))"#);
+            @r#"
+        Pattern(
+            FilePath {
+                path: "foo",
+                case_sensitive: true,
+            },
+        )
+        "#);
         insta::assert_debug_snapshot!(
             parse(r#"root-glob:"""#).unwrap(),
-            @r#"Pattern(FilePath(""))"#);
+            @r#"
+        Pattern(
+            FilePath {
+                path: "",
+                case_sensitive: true,
+            },
+        )
+        "#);
         insta::assert_debug_snapshot!(
             parse(r#"root-glob:".""#).unwrap(),
-            @r#"Pattern(FilePath(""))"#);
+            @r#"
+        Pattern(
+            FilePath {
+                path: "",
+                case_sensitive: true,
+            },
+        )
+        "#);
 
         // workspace-relative, with meta characters
         insta::assert_debug_snapshot!(
@@ -750,6 +890,7 @@ mod tests {
                     tokens: _,
                     is_recursive: false,
                 },
+                case_sensitive: true,
             },
         )
         "#);
@@ -765,6 +906,7 @@ mod tests {
                     ],
                     is_recursive: false,
                 },
+                case_sensitive: true,
             },
         )
         "#);
@@ -782,8 +924,9 @@ mod tests {
 
         // Case-insensitive glob patterns
         let result = parse(r#"glob-i:"foo""#).unwrap();
-        if let FilesetExpression::Pattern(FilePattern::FilePath(path)) = &result {
+        if let FilesetExpression::Pattern(FilePattern::FilePath { path, case_sensitive }) = &result {
             assert_eq!(path.as_internal_file_string(), "cur/foo");
+            assert!(!case_sensitive);
         } else {
             panic!("Expected FilePath pattern, got: {:?}", result);
         }
@@ -868,25 +1011,60 @@ mod tests {
         insta::assert_debug_snapshot!(parse("~x").unwrap(), @r#"
         Difference(
             All,
-            Pattern(PrefixPath("cur/x")),
+            Pattern(
+                PrefixPath {
+                    path: "cur/x",
+                    case_sensitive: true,
+                },
+            ),
         )
         "#);
         insta::assert_debug_snapshot!(parse("x|y|root:z").unwrap(), @r#"
         UnionAll(
             [
-                Pattern(PrefixPath("cur/x")),
-                Pattern(PrefixPath("cur/y")),
-                Pattern(PrefixPath("z")),
+                Pattern(
+                    PrefixPath {
+                        path: "cur/x",
+                        case_sensitive: true,
+                    },
+                ),
+                Pattern(
+                    PrefixPath {
+                        path: "cur/y",
+                        case_sensitive: true,
+                    },
+                ),
+                Pattern(
+                    PrefixPath {
+                        path: "z",
+                        case_sensitive: true,
+                    },
+                ),
             ],
         )
         "#);
         insta::assert_debug_snapshot!(parse("x|y&z").unwrap(), @r#"
         UnionAll(
             [
-                Pattern(PrefixPath("cur/x")),
+                Pattern(
+                    PrefixPath {
+                        path: "cur/x",
+                        case_sensitive: true,
+                    },
+                ),
                 Intersection(
-                    Pattern(PrefixPath("cur/y")),
-                    Pattern(PrefixPath("cur/z")),
+                    Pattern(
+                        PrefixPath {
+                            path: "cur/y",
+                            case_sensitive: true,
+                        },
+                    ),
+                    Pattern(
+                        PrefixPath {
+                            path: "cur/z",
+                            case_sensitive: true,
+                        },
+                    ),
                 ),
             ],
         )
@@ -940,6 +1118,7 @@ mod tests {
             tree: Dir {
                 "foo": File {},
             },
+            case_sensitive: true,
         }
         "#);
         insta::assert_debug_snapshot!(
@@ -949,6 +1128,7 @@ mod tests {
             tree: Dir {
                 "foo": Prefix {},
             },
+            case_sensitive: true,
         }
         "#);
     }
@@ -1034,6 +1214,7 @@ mod tests {
                     "bar": File {},
                 },
             },
+            case_sensitive: true,
         }
         "#);
 
@@ -1048,6 +1229,7 @@ mod tests {
                     "baz": Prefix {},
                 },
             },
+            case_sensitive: true,
         }
         "#);
     }
@@ -1067,11 +1249,13 @@ mod tests {
                 tree: Dir {
                     "foo": File {},
                 },
+                case_sensitive: true,
             },
             input2: PrefixMatcher {
                 tree: Dir {
                     "bar": Prefix {},
                 },
+                case_sensitive: true,
             },
         }
         "#);
@@ -1123,11 +1307,13 @@ mod tests {
                     tree: Dir {
                         "foo": File {},
                     },
+                    case_sensitive: true,
                 },
                 input2: PrefixMatcher {
                     tree: Dir {
                         "bar": Prefix {},
                     },
+                    case_sensitive: true,
                 },
             },
         }
